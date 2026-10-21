@@ -179,6 +179,9 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     private final List<String> favourites;
     /** Grid apps fill the dock slots dock_apps leaves free (config.xml, fill_dock). */
     private final boolean fillDock;
+    /** Most used apps first, dock included (config.xml sort_by_usage); ranks from the last reload. */
+    private final boolean sortByUsage;
+    private Map<String, Integer> usageRanks = Collections.emptyMap();
     /** Dock apps found at the last reload, and the empty slots after them. */
     private int docked, emptySlots;
     /** Never shown as tiles (res/values/config.xml, hidden_apps). */
@@ -203,6 +206,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         this.dockSize = dockSize;
         this.favourites = cfg.dockApps;
         this.fillDock = cfg.fillDock;
+        this.sortByUsage = cfg.sortByUsage;
         this.hidden = new HashSet<>(cfg.hiddenApps);
         this.animations = cfg.animations;
         this.advancedEffects = cfg.animations && cfg.advancedEffects;
@@ -270,7 +274,12 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
                 fresh.add(new Entry(label, component, banner, icon));
             }
         }
+        // Usage order is skipped while reordering, so the owner moves tiles from the order they see saved.
+        usageRanks = sortByUsage && !reordering ? UsageOrder.ranks(UsageOrder.load(ctx)) : Collections.emptyMap();
         Collections.sort(fresh, (a, b) -> {
+            // Most used first when sort_by_usage is on; unused apps follow by the rules below.
+            int used = UsageOrder.compare(usageRanks, a.pkg, b.pkg);
+            if (used != 0) return used;
             // The owner's own order first; tiles it does not know (new installs) follow by the rule below.
             int saved = Order.compare(savedRanks, a.component.flattenToShortString(), b.component.flattenToShortString());
             if (saved != 0) return saved;
@@ -294,6 +303,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         }
         docked = 0;
         while (docked < fresh.size() && favourites.contains(fresh.get(docked).pkg)) docked++;
+        // Under usage order the dock is simply the most used apps, so no slot is left empty.
+        if (!usageRanks.isEmpty()) docked = Math.min(dockSize, fresh.size());
         emptySlots = dockRow && !reordering ? DockSlots.empty(docked, dockSize, fresh.size(), fillDock) : 0;
         for (int i = 0; i < emptySlots; i++) {
             fresh.add(docked + i, new Entry(Entry.EMPTY, "", new ComponentName(ctx, "empty-dock-slot-" + i),
