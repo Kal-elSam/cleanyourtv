@@ -1,0 +1,59 @@
+# Fork only: merge Gathin23/cleanyourtv main into this branch every day, and push only when the
+# launcher still builds and its unit tests pass. A conflict or a red build fails the run (GitHub emails
+# the failure) and leaves the branch untouched, so it can be merged by hand.
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository != 'Gathin23/cleanyourtv'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream main
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/Gathin23/cleanyourtv.git
+          git fetch --no-tags upstream main
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already up to date with upstream."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git merge --no-edit upstream/main; then
+            git merge --abort
+            echo "::error::Merge conflict with upstream main; merge it by hand."
+            exit 1
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        if: steps.merge.outputs.changed == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Build and test the launcher
+        if: steps.merge.outputs.changed == 'true'
+        working-directory: launcher
+        run: ./gradlew testDebugUnitTest assembleRelease --console=plain
+
+      - name: Push
+        if: steps.merge.outputs.changed == 'true'
+        run: git push origin HEAD:${{ github.ref_name }}
